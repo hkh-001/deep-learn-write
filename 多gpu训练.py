@@ -42,3 +42,13 @@ new_params = get_params(params, d2l.try_gpu(0))
 print('b1 权重:', new_params[1])
 print('b1 梯度:', new_params[1].grad)
 
+def allreduce(data):
+    for i in range(1, len(data)):
+        data[0][:] += data[i].to(data[0].device)
+    for i in range(1, len(data)):
+        data[i][:] = data[0].to(data[i].device)
+
+data = [torch.ones((1, 2), device=d2l.try_gpu(i)) * (i + 1) for i in range(2)]
+print('allreduce之前：\n', data[0], '\n', data[1])
+allreduce(data)
+print('allreduce之后：\n', data[0], '\n', data[1])
