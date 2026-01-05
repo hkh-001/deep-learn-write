@@ -31,3 +31,14 @@ def lenet(X, params):
 
 # 交叉熵损失函数
 loss = nn.CrossEntropyLoss(reduction='none')
+
+def get_params(params, device):
+    new_params = [p.to(device) for p in params]
+    for p in new_params:
+        p.requires_grad_()
+    return new_params
+
+new_params = get_params(params, d2l.try_gpu(0))
+print('b1 权重:', new_params[1])
+print('b1 梯度:', new_params[1].grad)
+
