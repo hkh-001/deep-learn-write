@@ -52,3 +52,58 @@ data = [torch.ones((1, 2), device=d2l.try_gpu(i)) * (i + 1) for i in range(2)]
 print('allreduce之前：\n', data[0], '\n', data[1])
 allreduce(data)
 print('allreduce之后：\n', data[0], '\n', data[1])
+
+data = torch.arange(20).reshape(4, 5)
+devices = [torch.device('cuda:0'), torch.device('cuda:1')]
+split = nn.parallel.scatter(data, devices)
+print('input :', data)
+print('load into', devices)
+print('output:', split)
+
+#@save
+def split_batch(X, y, devices):
+    """将X和y拆分到多个设备上"""
+    assert X.shape[0] == y.shape[0]
+    return (nn.parallel.scatter(X, devices),
+            nn.parallel.scatter(y, devices))
+
+def train_batch(X, y, device_params, devices, lr):
+    X_shards, y_shards = split_batch(X, y, devices)
+    # 在每个GPU上分别计算损失
+    ls = [loss(lenet(X_shard, device_W), y_shard).sum()
+          for X_shard, y_shard, device_W in zip(
+              X_shards, y_shards, device_params)]
+    for l in ls:  # 反向传播在每个GPU上分别执行
+        l.backward()
+    # 将每个GPU的所有梯度相加，并将其广播到所有GPU
+    with torch.no_grad():
+        for i in range(len(device_params[0])):
+            allreduce(
+                [device_params[c][i].grad for c in range(len(devices))])
+    # 在每个GPU上分别更新模型参数
+    for param in device_params:
+        d2l.sgd(param, lr, X.shape[0]) # 在这里，我们使用全尺寸的小批量
+
+def train(num_gpus, batch_size, lr):
+    train_iter, test_iter = d2l.load_data_fashion_mnist(batch_size)
+    devices = [d2l.try_gpu(i) for i in range(num_gpus)]
+    # 将模型参数复制到num_gpus个GPU
+    device_params = [get_params(params, d) for d in devices]
+    num_epochs = 10
+    animator = d2l.Animator('epoch', 'test acc', xlim=[1, num_epochs])
+    timer = d2l.Timer()
+    for epoch in range(num_epochs):
+        timer.start()
+        for X, y in train_iter:
+            # 为单个小批量执行多GPU训练
+            train_batch(X, y, device_params, devices, lr)
+            torch.cuda.synchronize()
+        timer.stop()
+        # 在GPU0上评估模型
+        animator.add(epoch + 1, (d2l.evaluate_accuracy_gpu(
+            lambda x: lenet(x, device_params[0]), test_iter, devices[0]),))
+    print(f'测试精度：{animator.Y[0][-1]:.2f}，{timer.avg():.1f}秒/轮，'
+          f'在{str(devices)}')
+
+train(num_gpus=1, batch_size=256, lr=0.2)
+train(num_gpus=1, batch_size=256, lr=0.2)
